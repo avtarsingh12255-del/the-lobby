@@ -700,6 +700,30 @@
         transition:color .2s,border-color .2s}
       .views.live{color:#ffd34d;border-color:rgba(255,211,77,.35)}
     </style>
+    <style>
+      #topPanel{position:fixed;inset:0;z-index:130;display:none;align-items:center;justify-content:center;
+        background:rgba(4,6,12,.84);backdrop-filter:blur(7px);padding:20px}
+      #topPanel.on{display:flex}
+      #topPanel .tp-in{width:min(600px,94vw);background:linear-gradient(180deg,#0d1120,#080b14);
+        border:1px solid var(--line);border-radius:18px;padding:24px 24px 18px;box-shadow:0 30px 90px rgba(0,0,0,.7)}
+      #topPanel h2{font-family:var(--font-display);font-size:20px;letter-spacing:.14em;color:#fff;margin:0 0 4px}
+      #topPanel .tp-sub{font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:var(--muted);margin-bottom:16px}
+      #tpList{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px;max-height:52vh;overflow:auto}
+      #tpList li{display:grid;grid-template-columns:34px 1fr 128px 44px;align-items:center;gap:10px;
+        padding:9px 10px;border-radius:10px;background:rgba(255,255,255,.035);border:1px solid transparent;
+        cursor:pointer;transition:.14s}
+      #tpList li:hover{background:rgba(255,46,107,.12);border-color:rgba(255,46,107,.4)}
+      #tpList .tp-rank{font-family:var(--font-body);font-weight:700;font-size:12px;color:var(--hot);opacity:.85}
+      #tpList .tp-name{font-weight:700;font-size:13px;letter-spacing:.04em;color:var(--text);
+        white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      #tpList .tp-bar{height:7px;border-radius:99px;background:rgba(255,255,255,.09);overflow:hidden}
+      #tpList .tp-bar i{display:block;height:100%;background:linear-gradient(90deg,#ff2e6b,#ff9d3d);border-radius:99px}
+      #tpList .tp-count{text-align:right;font-weight:800;font-size:12px;color:#ffd34d;font-variant-numeric:tabular-nums}
+      #tpList .tp-empty{cursor:default;display:block;color:var(--muted);font-size:12px;line-height:1.6;text-align:center;
+        background:none;border:0}
+      #topPanel .tp-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:16px}
+      #topPanel .tp-hint{font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);opacity:.8}
+    </style>
   </head>
   <body>
     <div class="noise"></div>
@@ -719,6 +743,7 @@
           </button>
           <button class="btn" id="soundBtn">&#9834; Sound on</button>
           <span class="views" id="views" title="Times this lobby has been opened">&#128065; &mdash;</span>
+          <button class="btn" id="topBtn">&#127942; Most played</button>
         </div>
       </header>
 
@@ -1692,6 +1717,81 @@
               .catch(next);
           }
           next();
+        })();
+
+        /* ---------------- most played leaderboard ---------------- */
+        (function () {
+          var btn = document.getElementById("topBtn");
+          if (!btn) return;
+          var KEY = "lobby_plays_v1";
+          var panel = document.createElement("div");
+          panel.id = "topPanel";
+          panel.innerHTML = '<div class="tp-in">' +
+            '<h2>MOST PLAYED</h2>' +
+            '<div class="tp-sub">cabinets ranked by launches</div>' +
+            '<ol id="tpList"></ol>' +
+            '<div class="tp-foot"><span class="tp-hint">saved in this browser</span>' +
+            '<button class="btn" id="tpClose" type="button">Close</button></div>' +
+            '</div>';
+          document.body.appendChild(panel);
+
+          function plays() { return store(KEY) || {}; }
+
+          function render() {
+            var p = plays();
+            var rows = GAMES.map(function (g, i) {
+              return { g: g, i: i, n: p[g.name] || 0 };
+            }).filter(function (r) { return r.n > 0; })
+              .sort(function (a, b) { return b.n - a.n || a.i - b.i; })
+              .slice(0, 10);
+            var list = panel.querySelector("#tpList");
+            if (!rows.length) {
+              list.innerHTML = '<li class="tp-empty">Nothing played yet.<br>The board fills as you open cabinets.</li>';
+              return;
+            }
+            var max = rows[0].n;
+            list.innerHTML = rows.map(function (r, i) {
+              var pct = Math.max(8, Math.round(r.n / max * 100));
+              return '<li data-name="' + r.g.name.replace(/"/g, "&quot;") + '">' +
+                '<span class="tp-rank">' + String(i + 1).padStart(2, "0") + '</span>' +
+                '<span class="tp-name">' + r.g.name + '</span>' +
+                '<span class="tp-bar"><i style="width:' + pct + '%"></i></span>' +
+                '<span class="tp-count">' + r.n + '</span></li>';
+            }).join("");
+          }
+          function open() { render(); panel.classList.add("on"); }
+          function close() { panel.classList.remove("on"); }
+
+          btn.addEventListener("click", function () {
+            if (panel.classList.contains("on")) close(); else open();
+            blip(760, 0.06, "square", 0.04);
+          });
+          panel.querySelector("#tpClose").addEventListener("click", close);
+          panel.addEventListener("click", function (e) { if (e.target === panel) close(); });
+          panel.querySelector("#tpList").addEventListener("click", function (e) {
+            var li = e.target.closest("li[data-name]");
+            if (!li) return;
+            var name = li.getAttribute("data-name");
+            var g = null;
+            for (var i = 0; i < GAMES.length; i++) if (GAMES[i].name === name) g = GAMES[i];
+            if (!g) return;
+            close();
+            openGame(g);
+          });
+          window.addEventListener("keydown", function (e) {
+            if (e.key === "Escape") close();
+          });
+
+          /* count every launch, wherever it came from (card, keyboard, leaderboard) */
+          var innerOpen = openGame;
+          openGame = function (g) {
+            try {
+              var p = plays();
+              p[g.name] = (p[g.name] || 0) + 1;
+              store(KEY, p);
+            } catch (err) {}
+            return innerOpen(g);
+          };
         })();
 
         /* ---------------- boot ---------------- */
